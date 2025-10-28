@@ -1,11 +1,12 @@
+use axum::routing::get;
 use axum::Router;
-use hocuspocus_extension_sqlite::SqliteDatabase;
-use hocuspocus_server::{router, AppState};
-use std::net::SocketAddr;
-use std::sync::Arc;
 use dashmap::DashMap;
 #[cfg(feature = "redis")]
 use hocuspocus_extension_redis::RedisBroadcaster;
+use hocuspocus_extension_sqlite::SqliteDatabase;
+use hocuspocus_server::{ws_handler, AppState};
+use std::net::SocketAddr;
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -39,7 +40,12 @@ async fn main() -> anyhow::Result<()> {
         redis: redis_opt,
     };
 
-    let app: Router = router(state);
+    let app: Router = Router::new()
+        .route(
+            "/ws",
+            get(|ws, state| ws_handler::<SqliteDatabase>(ws, state)),
+        )
+        .with_state(Arc::new(state));
 
     let addr: SocketAddr = "127.0.0.1:4000".parse().unwrap();
     tracing::info!(%addr, "listening");

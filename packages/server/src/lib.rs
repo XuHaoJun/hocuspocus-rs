@@ -5,8 +5,7 @@ use anyhow::Result;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::response::IntoResponse;
-use axum::routing::get;
-use axum::Router;
+
 use dashmap::DashMap;
 use futures_util::StreamExt;
 use hocuspocus_extension_database::types::{FetchContext, StoreContext};
@@ -33,13 +32,7 @@ pub struct AppState<E: DatabaseExtension> {
     pub redis: Option<Arc<RedisBroadcaster>>, // optional broadcaster
 }
 
-pub fn router<E: DatabaseExtension + 'static>(state: AppState<E>) -> Router {
-    Router::new()
-        .route("/ws", get(|ws, state| ws_handler::<E>(ws, state)))
-        .with_state(Arc::new(state))
-}
-
-async fn ws_handler<E: DatabaseExtension + 'static>(
+pub async fn ws_handler<E: DatabaseExtension + 'static>(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState<E>>>,
 ) -> impl IntoResponse {
