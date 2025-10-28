@@ -4,7 +4,7 @@ use dashmap::DashMap;
 #[cfg(feature = "redis")]
 use hocuspocus_extension_redis::RedisBroadcaster;
 use hocuspocus_extension_sqlite::SqliteDatabase;
-use hocuspocus_server::{ws_handler, AppState};
+use hocuspocus_server::{ws_handler, AppState, AuthScope, StaticTokenAuth};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -36,6 +36,10 @@ async fn main() -> anyhow::Result<()> {
         max_debounce_ms: 2000,
         doc_counts: DashMap::new(),
         doc_latest: DashMap::new(),
+        auth: Some(Arc::new(StaticTokenAuth {
+            token: "test".to_string(),
+            scope: AuthScope::ReadWrite,
+        })),
         #[cfg(feature = "redis")]
         redis: redis_opt,
     };

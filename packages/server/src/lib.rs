@@ -30,6 +30,8 @@ pub struct AppState<E: DatabaseExtension> {
     pub doc_latest: DashMap<String, Vec<u8>>, // last full state per doc
     #[cfg(feature = "redis")]
     pub redis: Option<Arc<RedisBroadcaster>>, // optional broadcaster
+    // Optional authentication provider; when None, auth is disabled
+    pub auth: Option<Arc<dyn AuthProvider + Send + Sync>>,
 }
 
 pub async fn ws_handler<E: DatabaseExtension + 'static>(
@@ -42,12 +44,14 @@ pub async fn ws_handler<E: DatabaseExtension + 'static>(
 
 const MSG_SYNC: u32 = 0;
 const MSG_AWARENESS: u32 = 1;
+const MSG_AUTH: u32 = 2;
 const MSG_QUERY_AWARENESS: u32 = 3;
 const MSG_SYNC_STATUS: u32 = 8;
 
 enum WorkerCmd {
     ApplyState(Vec<u8>),
     InboundWs(Vec<u8>),
+    SetReadonly(bool),
     Stop,
 }
 
@@ -76,6 +80,7 @@ fn worker_thread(
     let doc = Doc::new();
     let mut awareness = Awareness::new(doc.clone());
     let protocol = DefaultProtocol;
+    let mut is_readonly = false;
 
     // when doc updates, compute state and send StoreState
     let ev_tx_updates = ev_tx.clone();
@@ -145,33 +150,45 @@ fn worker_thread(
                                 1 | 2 => {
                                     // SyncStep2 or Update
                                     if let Ok(upd_bytes) = bcur.read_buf() {
-                                        // apply incoming update (v1 only)
-                                        if let Ok(update) = Update::decode_v1(upd_bytes) {
-                                            if let Err(e) = doc.transact_mut().apply_update(update)
-                                            {
-                                                tracing::warn!(?e, "failed to apply update");
-                                            }
-                                            // send SyncStatus applied=1
+                                        if is_readonly {
+                                            // In read-only mode, ignore incoming updates but still acknowledge to avoid client loops.
                                             let mut ack = Vec::new();
                                             ack.write_string(&frame_doc_name);
                                             ack.write_var(MSG_SYNC_STATUS);
                                             ack.write_var(1u32);
-                                            tracing::debug!(out_doc = %frame_doc_name, manual = true, "outbound sync status ack");
+                                            tracing::debug!(out_doc = %frame_doc_name, manual = true, "ack in readonly mode (no apply)");
                                             let _ =
                                                 ev_tx.blocking_send(WorkerEvent::OutgoingWs(ack));
-
-                                            // also emit StoreState immediately to ensure persistence
-                                            let bytes = {
-                                                let txn = doc.transact();
-                                                let sv = StateVector::default();
-                                                txn.encode_state_as_update_v1(&sv)
-                                            };
-                                            let _ =
-                                                ev_tx.blocking_send(WorkerEvent::StoreState(bytes));
                                         } else {
-                                            tracing::debug!(
-                                                "failed to decode update bytes (v1 only)"
-                                            );
+                                            // apply incoming update (v1 only)
+                                            if let Ok(update) = Update::decode_v1(upd_bytes) {
+                                                if let Err(e) =
+                                                    doc.transact_mut().apply_update(update)
+                                                {
+                                                    tracing::warn!(?e, "failed to apply update");
+                                                }
+                                                // send SyncStatus applied=1
+                                                let mut ack = Vec::new();
+                                                ack.write_string(&frame_doc_name);
+                                                ack.write_var(MSG_SYNC_STATUS);
+                                                ack.write_var(1u32);
+                                                tracing::debug!(out_doc = %frame_doc_name, manual = true, "outbound sync status ack");
+                                                let _ = ev_tx
+                                                    .blocking_send(WorkerEvent::OutgoingWs(ack));
+
+                                                // also emit StoreState immediately to ensure persistence
+                                                let bytes = {
+                                                    let txn = doc.transact();
+                                                    let sv = StateVector::default();
+                                                    txn.encode_state_as_update_v1(&sv)
+                                                };
+                                                let _ = ev_tx
+                                                    .blocking_send(WorkerEvent::StoreState(bytes));
+                                            } else {
+                                                tracing::debug!(
+                                                    "failed to decode update bytes (v1 only)"
+                                                );
+                                            }
                                         }
                                     }
                                 }
@@ -182,9 +199,8 @@ fn worker_thread(
                         }
                     }
                     2 => {
-                        // Auth
-                        // Ignore auth for MVP (no auth)
-                        tracing::debug!("ignoring auth message");
+                        // Auth messages are handled in the outer task (on_ws). Worker shouldn't receive them.
+                        tracing::debug!("auth message received by worker; ignoring");
                     }
                     MSG_AWARENESS => {
                         if let Ok(inner) = YMsg::decode_v1(body) {
@@ -219,6 +235,9 @@ fn worker_thread(
                     _ => {}
                 }
             }
+            WorkerCmd::SetReadonly(ro) => {
+                is_readonly = ro;
+            }
             WorkerCmd::Stop => break,
         }
     }
@@ -240,6 +259,8 @@ async fn on_ws<E: DatabaseExtension + 'static>(mut socket: WebSocket, state: Arc
     let mut next_deadline: Option<Instant> = None;
     let mut latest_state_bytes: Option<Vec<u8>> = None;
     let mut selected_doc_name: Option<String> = None;
+    let mut is_authenticated: bool = state.auth.is_none();
+    let mut loaded_state: bool = false;
     #[cfg(feature = "redis")]
     let mut redis_sub_handle: Option<tokio::task::JoinHandle<()>> = None;
 
@@ -256,17 +277,60 @@ async fn on_ws<E: DatabaseExtension + 'static>(mut socket: WebSocket, state: Arc
                 match maybe_msg {
                     Some(Ok(Message::Binary(b))) => {
                         // detect document name from first frame and load state before forwarding
+                        let mut handled_by_auth = false;
                         if selected_doc_name.is_none() {
                             let mut cur = YCursor::new(b.as_ref());
                             if let Ok(name_str) = cur.read_string() {
                                 let name = name_str.to_string();
-                                tracing::debug!(document_name = %name, "first frame; loading state");
+                                tracing::debug!(document_name = %name, "first frame received");
                                 // increment connection count for this doc
                                 state.doc_counts.entry(name.clone()).and_modify(|c| *c += 1).or_insert(1);
                                 selected_doc_name = Some(name.clone());
-                                if let Err(e) = load_and_send_state(&*state.db, &name, &cmd_tx).await {
-                                    tracing::warn!(error = %e, document_name = %name, "failed to load/apply state");
+
+                                // If auth is enabled, require auth before loading state or forwarding messages
+                                if state.auth.is_some() && !is_authenticated {
+                                    // Peek message type
+                                    let mtype: u32 = cur.read_var().unwrap_or(u32::MAX);
+                                    if mtype == MSG_AUTH {
+                                        // subtag
+                                        let sub: u32 = cur.read_var().unwrap_or(u32::MAX);
+                                        if sub == 0 {
+                                            // token
+                                            if let Ok(token_str) = cur.read_string() {
+                                                if let Some(provider) = state.auth.as_ref() {
+                                                    match provider.on_authenticate(&name, &token_str) {
+                                                        Ok(scope) => {
+                                                            // send authenticated reply
+                                                            let readonly = matches!(scope, AuthScope::ReadOnly);
+                                                            send_auth_authenticated(&mut socket, &name, readonly).await;
+                                                            is_authenticated = true;
+                                                            let _ = cmd_tx.send(WorkerCmd::SetReadonly(readonly));
+                                                            handled_by_auth = true; // don't forward auth frame
+                                                        }
+                                                        Err(e) => {
+                                                            send_auth_permission_denied(&mut socket, &name, Some(&format!("{}", e))).await;
+                                                            // Keep the connection open; ask for token again.
+                                                            send_auth_token_request(&mut socket, &name).await;
+                                                            handled_by_auth = true;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        } else {
+                                            // unexpected auth subtype
+                                            send_auth_permission_denied(&mut socket, &name, Some("invalid-auth-message")).await;
+                                            // Keep the connection open; ask for token again.
+                                            send_auth_token_request(&mut socket, &name).await;
+                                            handled_by_auth = true;
+                                        }
+                                    } else {
+                                        // Not an auth message: request token
+                                        send_auth_token_request(&mut socket, &name).await;
+                                        handled_by_auth = true; // don't forward non-auth
+                                    }
                                 }
+
+                                // subscribe to redis after doc is known
                                 #[cfg(feature = "redis")]
                                 if let Some(bc) = state.redis.as_ref() {
                                     let (handle, mut rx) = bc.subscribe(name.clone()).await.expect("redis subscribe");
@@ -281,8 +345,64 @@ async fn on_ws<E: DatabaseExtension + 'static>(mut socket: WebSocket, state: Arc
                             } else {
                                 tracing::debug!("failed to read document name from first frame");
                             }
+                        } else if state.auth.is_some() && !is_authenticated {
+                            // Post-selection but pre-auth: only process auth frames
+                            let mut cur = YCursor::new(b.as_ref());
+                            let _ = cur.read_string(); // skip name
+                            let mtype: u32 = cur.read_var().unwrap_or(u32::MAX);
+                            if mtype == MSG_AUTH {
+                                let name = selected_doc_name.as_ref().unwrap().clone();
+                                let sub: u32 = cur.read_var().unwrap_or(u32::MAX);
+                                if sub == 0 {
+                                    if let Ok(token_str) = cur.read_string() {
+                                        if let Some(provider) = state.auth.as_ref() {
+                                            match provider.on_authenticate(&name, &token_str) {
+                                                Ok(scope) => {
+                                                    let readonly = matches!(scope, AuthScope::ReadOnly);
+                                                    send_auth_authenticated(&mut socket, &name, readonly).await;
+                                                    is_authenticated = true;
+                                                    let _ = cmd_tx.send(WorkerCmd::SetReadonly(readonly));
+                                                    handled_by_auth = true;
+                                                }
+                                                Err(e) => {
+                                                    send_auth_permission_denied(&mut socket, &name, Some(&format!("{}", e))).await;
+                                                    // Keep the connection open; ask for token again, same as Hocuspocus.
+                                                    send_auth_token_request(&mut socket, &name).await;
+                                                    handled_by_auth = true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    send_auth_permission_denied(&mut socket, &name, Some("invalid-auth-message")).await;
+                                    // Keep the connection open; ask for token again, same as Hocuspocus.
+                                    send_auth_token_request(&mut socket, &name).await;
+                                    handled_by_auth = true;
+                                }
+                            } else {
+                                // request token again and ignore
+                                let name = selected_doc_name.as_ref().unwrap().clone();
+                                send_auth_token_request(&mut socket, &name).await;
+                                handled_by_auth = true;
+                            }
                         }
-                        let _ = cmd_tx.send(WorkerCmd::InboundWs(b.to_vec()));
+
+                        // If we just authenticated or auth is disabled, ensure state is loaded once
+                        if !loaded_state {
+                            if let Some(name) = selected_doc_name.as_ref() {
+                                if is_authenticated {
+                                    tracing::debug!(document_name = %name, "loading state after auth");
+                                    if let Err(e) = load_and_send_state(&*state.db, name, &cmd_tx).await {
+                                        tracing::warn!(error = %e, document_name = %name, "failed to load/apply state");
+                                    }
+                                    loaded_state = true;
+                                }
+                            }
+                        }
+
+                        if !handled_by_auth {
+                            let _ = cmd_tx.send(WorkerCmd::InboundWs(b.to_vec()));
+                        }
                     }
                     Some(Ok(Message::Ping(p))) => {
                         tracing::debug!(size = %p.len(), "ping received");
@@ -446,4 +566,66 @@ async fn store_bytes<E: DatabaseExtension>(db: &E, name: &str, bytes: &[u8]) -> 
     })
     .await?;
     Ok(())
+}
+
+// ===== Auth support (Hocuspocus-compatible) =====
+
+#[derive(Clone, Copy, Debug)]
+pub enum AuthScope {
+    ReadOnly,
+    ReadWrite,
+}
+
+pub trait AuthProvider {
+    fn on_authenticate(&self, document_name: &str, token: &str) -> anyhow::Result<AuthScope>;
+}
+
+pub struct StaticTokenAuth {
+    pub token: String,
+    pub scope: AuthScope,
+}
+
+impl AuthProvider for StaticTokenAuth {
+    fn on_authenticate(&self, _document_name: &str, token: &str) -> anyhow::Result<AuthScope> {
+        if token == self.token {
+            Ok(self.scope)
+        } else {
+            anyhow::bail!("permission-denied");
+        }
+    }
+}
+
+async fn send_auth_token_request(socket: &mut WebSocket, name: &str) {
+    let mut out = Vec::new();
+    out.write_string(name);
+    out.write_var(MSG_AUTH);
+    // AuthMessageType.Token = 0
+    out.write_var(0u32);
+    let _ = socket
+        .send(Message::Binary(axum::body::Bytes::from(out)))
+        .await;
+}
+
+async fn send_auth_authenticated(socket: &mut WebSocket, name: &str, readonly: bool) {
+    let mut out = Vec::new();
+    out.write_string(name);
+    out.write_var(MSG_AUTH);
+    // AuthMessageType.Authenticated = 2
+    out.write_var(2u32);
+    out.write_string(if readonly { "readonly" } else { "read-write" });
+    let _ = socket
+        .send(Message::Binary(axum::body::Bytes::from(out)))
+        .await;
+}
+
+async fn send_auth_permission_denied(socket: &mut WebSocket, name: &str, reason: Option<&str>) {
+    let mut out = Vec::new();
+    out.write_string(name);
+    out.write_var(MSG_AUTH);
+    // AuthMessageType.PermissionDenied = 1
+    out.write_var(1u32);
+    out.write_string(reason.unwrap_or("permission-denied"));
+    let _ = socket
+        .send(Message::Binary(axum::body::Bytes::from(out)))
+        .await;
 }

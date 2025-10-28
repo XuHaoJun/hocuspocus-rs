@@ -4,9 +4,10 @@
 - Database extension trait and SQLite adapter using `sqlx`
 - Apply latest stored state on load; persist full encoded state on store
 - Axum-based WebSocket scaffolding (skeleton in Phase 2)
+ - Optional Auth handshake (disabled by default)
 
 ### Out of scope
-- Authentication/authorization
+- Authorization models beyond the handshake (RBAC/ABAC, scopes beyond readonly/read-write)
 - Redis presence/pub-sub
 - Non-database extensions and advanced hooks
 - Incremental update storage or audit trails
@@ -14,7 +15,7 @@
 
 ### Decisions
 - Database: SQLite via `sqlx`
-- Auth: none (development mode)
+- Auth: optional Hocuspocus handshake (Token → Authenticated/PermissionDenied), disabled by default
 - Debounce: handled by server; extension remains stateless
 
 ### Roadmap

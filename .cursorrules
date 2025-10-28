@@ -2,7 +2,7 @@ Project: hocuspocus-rs (MVP)
 
 Goals:
 - Port Hocuspocus database persistence to Rust using yrs + axum
-- MVP: Database extension only (SQLite via sqlx), no auth
+- MVP: Database extension only (SQLite via sqlx); auth optional via handshake
 
 Priorities:
 - Implement database extension trait + SQLite adapter first
@@ -15,7 +15,7 @@ Directory map:
 - Do not modify `learn-projects/*` submodules
 
 Constraints:
-- No auth for MVP
+- Auth optional (Hocuspocus handshake only), disabled by default
 - SQLite only (sqlx); Redis optional/future
 - Keep public APIs explicit and documented
 
@@ -31,10 +31,11 @@ Code style:
 
 Do:
 - Mirror TS hook semantics for database fetch/store
+- Mirror Hocuspocus Auth handshake when enabled (Token→Authenticated/PermissionDenied)
 - Use yrs for encode/apply of state bytes
 - Keep extension idempotent; rely on server debounce
 
 Don’t:
 - Change submodules
-- Implement auth or non-database extensions in MVP
+- Implement non-database extensions in MVP (Auth allowed only via handshake when enabled)
 - Store incremental updates (state blob only in MVP)

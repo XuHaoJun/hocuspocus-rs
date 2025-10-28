@@ -5,6 +5,7 @@ import { HocuspocusProvider } from "@hocuspocus/provider";
 const provider = new HocuspocusProvider({
   url: "ws://127.0.0.1:4000/ws",
   name: "example-document1",
+  token: "test",
 });
 
 // Define `tasks` as an Array

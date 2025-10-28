@@ -8,13 +8,14 @@
 
 ### Lifecycle
 1. Client connects via WebSocket to Axum route.
-2. Server loads/creates a `yrs::Doc` for `documentName`.
-3. `onLoadDocument`:
+2. If Auth is enabled, the first frame must be an Auth token for the selected `documentName`. Server replies with Authenticated/PermissionDenied and gates all other messages until authenticated.
+3. Server loads/creates a `yrs::Doc` for `documentName`.
+4. `onLoadDocument`:
    - Database extension `fetch` returns last known state (optional).
    - Server applies state to the `yrs` doc.
-4. Client syncs via y-sync messages (out of scope for MVP implementation, described here for context).
-5. On changes, server debounces and calls `onStoreDocument`.
-6. Database extension `store` persists the encoded state.
+5. Client syncs via y-sync messages (out of scope for MVP implementation, described here for context).
+6. On changes, server debounces and calls `onStoreDocument`.
+7. Database extension `store` persists the encoded state.
 
 ### Extension API (MVP)
 ```rust
@@ -33,6 +34,6 @@ Where `FetchContext`/`StoreContext` include: `document_name`, timestamp, and opt
 
 ### Future Integration
 - Awareness and broadcast: consider Redis for horizontal scale.
-- Auth: bearer/JWT or hook-based; not in MVP.
+- Auth: optional handshake (Token → Authenticated/PermissionDenied) via pluggable `AuthProvider`; disabled by default.
 
 

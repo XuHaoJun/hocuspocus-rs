@@ -7,7 +7,7 @@ Rust port of the Hocuspocus collaboration backend focused on an MVP that impleme
 - MVP focuses on persistence only (database extension)
 - Storage: SQLite via `sqlx`
 - Transport: `axum` WebSocket (skeleton planned in Phase 2)
-- Auth: none (development mode)
+- Auth: optional Hocuspocus handshake (disabled by default)
 
 ## Monorepo layout
 
@@ -29,6 +29,16 @@ Implementation phases:
 - Phase 0: Documentation and contributor rules
 - Phase 1: `DatabaseExtension` trait + `SqliteDatabase` adapter (no server yet)
 - Phase 2: `axum` WebSocket skeleton + lifecycle glue to call `fetch/store`
+
+## Auth (optional)
+
+When enabled, the server mirrors the Hocuspocus Auth handshake:
+
+- Incoming first frame per document: `[varstring documentName][varuint 2][varuint 0][varstring token]`
+- Success reply: `[varstring documentName][varuint 2][varuint 2][varstring "readonly"|"read-write"]`
+- Deny reply: `[varstring documentName][varuint 2][varuint 1][varstring reason]`
+
+Server configuration supports a pluggable `AuthProvider` with a built-in static token provider. By default, auth is disabled.
 
 ## Goals
 
