@@ -67,6 +67,19 @@ fn worker_thread(
     cmd_rx: std::sync::mpsc::Receiver<WorkerCmd>,
     ev_tx: tokio_mpsc::Sender<WorkerEvent>,
 ) {
+    // Rationale:
+    // - Use Hocuspocus framing (varstring document name + varuint message type) instead of
+    //   raw yrs protocol. This enables multiplexing multiple documents over a single socket and
+    //   supports Hocuspocus-specific message kinds (e.g. SyncReply, SyncStatus, Stateless) that
+    //   yrs::sync does not define.
+    // - Libraries like yrs-axum speak pure yrs (no outer envelope). That approach is simpler,
+    //   but incompatible with Hocuspocus Provider semantics and our routing/debounce/storage flow.
+    // - We therefore parse the outer envelope here and handle inner y-sync/awareness with yrs
+    //   types. Auth is ignored for the MVP, and we persist full state blobs only (no increments),
+    //   while the server side debounces store operations.
+    // Invariants:
+    // - All inbound/outbound frames are prefixed with the document name.
+    // - Storage events carry the full document state; the database extension remains stateless.
     let doc = Doc::new();
     let mut awareness = Awareness::new(doc.clone());
     let protocol = DefaultProtocol;
