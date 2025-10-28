@@ -1,0 +1,14 @@
+[package]
+name = "hocuspocus-extension-redis"
+version = "0.1.0"
+edition = "2021"
+description = "Redis pub/sub extension for hocuspocus-rs (broadcast y-sync/awareness)"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+redis = { version = "0.24", features = ["tokio-comp", "aio", "connection-manager"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+bytes = "1"
+async-trait = "0.1"
+futures-util = "0.3"

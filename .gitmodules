@@ -1,0 +1,15 @@
+[submodule "learn-projects/hocuspocus"]
+	path = learn-projects/hocuspocus
+	url = git@github.com:ueberdosis/hocuspocus.git
+[submodule "learn-projects/yrs-axum"]
+	path = learn-projects/yrs-axum
+	url = git@github.com:vagmi/yrs-axum.git
+[submodule "yrs-warp"]
+	path = yrs-warp
+	url = git@github.com:y-crdt/yrs-warp.git
+[submodule "learn-projects/y-crdt"]
+	path = learn-projects/y-crdt
+	url = git@github.com:y-crdt/y-crdt.git
+[submodule "learn-projects/yrs-warp"]
+	path = learn-projects/yrs-warp
+	url = git@github.com:y-crdt/yrs-warp.git
