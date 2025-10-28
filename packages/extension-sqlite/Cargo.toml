@@ -1,0 +1,15 @@
+[package]
+name = "hocuspocus-extension-sqlite"
+version = "0.1.0"
+edition = "2021"
+description = "SQLite adapter for hocuspocus-rs database extension (MVP)"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite"] }
+hocuspocus-extension-database = { path = "../extension-database" }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

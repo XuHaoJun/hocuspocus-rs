@@ -1,8 +1,8 @@
-use crate::{DatabaseExtension};
-use crate::types::{FetchContext, StoreContext};
 use anyhow::Result;
 use async_trait::async_trait;
-use sqlx::{SqlitePool};
+use hocuspocus_extension_database::types::{FetchContext, StoreContext};
+use hocuspocus_extension_database::DatabaseExtension;
+use sqlx::SqlitePool;
 
 pub struct SqliteDatabase {
     pool: SqlitePool,
@@ -25,10 +25,11 @@ impl SqliteDatabase {
 #[async_trait]
 impl DatabaseExtension for SqliteDatabase {
     async fn fetch(&self, ctx: FetchContext) -> Result<Option<Vec<u8>>> {
-        let bytes: Option<Vec<u8>> = sqlx::query_scalar("SELECT state FROM documents WHERE name = ?")
-            .bind(&ctx.document_name)
-            .fetch_optional(&self.pool)
-            .await?;
+        let bytes: Option<Vec<u8>> =
+            sqlx::query_scalar("SELECT state FROM documents WHERE name = ?")
+                .bind(&ctx.document_name)
+                .fetch_optional(&self.pool)
+                .await?;
         Ok(bytes)
     }
 

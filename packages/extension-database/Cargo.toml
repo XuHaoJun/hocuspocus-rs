@@ -2,13 +2,9 @@
 name = "hocuspocus-extension-database"
 version = "0.1.0"
 edition = "2021"
-description = "Database persistence extension for hocuspocus-rs (MVP): trait + SQLite adapter"
+description = "Database persistence extension for hocuspocus-rs (MVP): trait and types"
 license = "MIT"
 
 [dependencies]
 async-trait = "0.1"
 anyhow = "1"
-sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite"] }
-
-[dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

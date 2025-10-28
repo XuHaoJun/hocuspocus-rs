@@ -1,12 +1,14 @@
 # hocuspocus-extension-database
 
-Database persistence extension for hocuspocus-rs (MVP). Provides a `DatabaseExtension` trait and a SQLite adapter using `sqlx`.
+Database persistence extension for hocuspocus-rs (MVP). Provides the `DatabaseExtension` trait and context types.
 
 ## Usage
 
+For a SQLite implementation, use the `hocuspocus-extension-sqlite` crate.
+
 ```rust
-use hocuspocus_extension_database::{DatabaseExtension, SqliteDatabase};
-use hocuspocus_extension_database::types::{FetchContext, StoreContext};
+use hocuspocus_extension_database::{DatabaseExtension, types::{FetchContext, StoreContext}};
+use hocuspocus_extension_sqlite::SqliteDatabase;
 
 # async fn demo() -> anyhow::Result<()> {
 let db = SqliteDatabase::connect("sqlite::memory:").await?;

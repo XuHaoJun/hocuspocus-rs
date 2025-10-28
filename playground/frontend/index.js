@@ -12,7 +12,8 @@ const tasks = provider.document.getArray("tasks");
 
 // Listen for changes
 tasks.observe((event) => {
-  console.log(event);
+  console.log(event.delta);
+  console.log(provider.document.toJSON());
   console.log("tasks were modified");
 });
 

@@ -29,4 +29,7 @@ pub trait DatabaseExtension: Send + Sync {
 ### Parity with TypeScript
 - Mirrors `@hocuspocus/extension-database` (`fetch/store` and `onLoadDocument`/`onStoreDocument`).
 
+### Implementations
+- SQLite adapter lives in crate `hocuspocus-extension-sqlite`.
+
 

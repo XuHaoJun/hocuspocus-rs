@@ -1,10 +1,9 @@
 use anyhow::Result;
-use redis::aio::ConnectionLike;
+use bytes::Bytes;
+use futures_util::stream::StreamExt;
 use redis::{AsyncCommands, Client, Msg};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use tokio::task::JoinHandle;
-use bytes::Bytes;
-use futures_util::stream::StreamExt;
 
 #[derive(Clone)]
 pub struct RedisBroadcaster {
@@ -15,11 +14,18 @@ pub struct RedisBroadcaster {
 impl RedisBroadcaster {
     pub async fn connect(url: &str, instance_id: String) -> Result<Self> {
         let client = Client::open(url)?;
-        Ok(Self { client, instance_id })
+        Ok(Self {
+            client,
+            instance_id,
+        })
     }
 
-    fn chan_sync(doc: &str) -> String { format!("hpr:doc:{}:sync", doc) }
-    fn chan_awareness(doc: &str) -> String { format!("hpr:doc:{}:awareness", doc) }
+    fn chan_sync(doc: &str) -> String {
+        format!("hpr:doc:{}:sync", doc)
+    }
+    fn chan_awareness(doc: &str) -> String {
+        format!("hpr:doc:{}:awareness", doc)
+    }
 
     pub async fn publish_sync(&self, doc: &str, payload: &[u8]) -> Result<()> {
         let mut conn = self.client.get_async_connection().await?;
@@ -55,13 +61,20 @@ impl RedisBroadcaster {
             let mut stream = pubsub.on_message();
             while let Some(msg) = stream.next().await {
                 if let Ok(payload) = msg.get_payload::<Vec<u8>>() {
-                    if payload.len() < 4 { continue; }
-                    let len = u32::from_be_bytes([payload[0],payload[1],payload[2],payload[3]]) as usize;
-                    if 4 + len > payload.len() { continue; }
-                    let src = &payload[4..4+len];
-                    if src == instance_id.as_bytes() { continue; }
+                    if payload.len() < 4 {
+                        continue;
+                    }
+                    let len = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]])
+                        as usize;
+                    if 4 + len > payload.len() {
+                        continue;
+                    }
+                    let src = &payload[4..4 + len];
+                    if src == instance_id.as_bytes() {
+                        continue;
+                    }
                     let is_sync = msg.get_channel_name().ends_with(":sync");
-                    let body = Bytes::copy_from_slice(&payload[4+len..]);
+                    let body = Bytes::copy_from_slice(&payload[4 + len..]);
                     let _ = tx.send((is_sync, body));
                 }
             }

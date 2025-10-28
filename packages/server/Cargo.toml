@@ -24,7 +24,8 @@ tokio = { version = "1", features = [
 ] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
-yrs = "0.21"
+yrs = "0.24"
 
 hocuspocus-extension-database = { path = "../extension-database" }
+hocuspocus-extension-sqlite = { path = "../extension-sqlite" }
 hocuspocus-extension-redis = { path = "../extension-redis", optional = true }

@@ -13,7 +13,9 @@ use hocuspocus_extension_database::types::{FetchContext, StoreContext};
 use hocuspocus_extension_database::DatabaseExtension;
 use tokio::sync::mpsc as tokio_mpsc;
 use tokio::time::{sleep_until, Instant};
-use yrs::sync::{Awareness, DefaultProtocol, Message as YMsg, Protocol, SyncMessage};
+use yrs::encoding::read::{Cursor as YCursor, Read as YRead};
+use yrs::encoding::write::Write as YWrite;
+use yrs::sync::{Awareness, DefaultProtocol, Message as YMsg, Protocol};
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
 use yrs::{Doc, ReadTxn, StateVector, Transact, Update};
@@ -49,58 +51,6 @@ const MSG_SYNC: u32 = 0;
 const MSG_AWARENESS: u32 = 1;
 const MSG_QUERY_AWARENESS: u32 = 3;
 const MSG_SYNC_STATUS: u32 = 8;
-
-fn read_var_uint(buf: &[u8], pos: &mut usize) -> u32 {
-    let mut num: u32 = 0;
-    let mut shift = 0u32;
-    loop {
-        if *pos >= buf.len() {
-            break;
-        }
-        let b = buf[*pos];
-        *pos += 1;
-        num |= ((b & 0x7F) as u32) << shift;
-        if (b & 0x80) == 0 {
-            break;
-        }
-        shift += 7;
-    }
-    num
-}
-
-fn write_var_uint(mut n: u32, out: &mut Vec<u8>) {
-    while n > 0x7F {
-        out.push(((n & 0x7F) as u8) | 0x80);
-        n >>= 7;
-    }
-    out.push(n as u8);
-}
-
-fn read_var_string<'a>(buf: &'a [u8], pos: &mut usize) -> Option<&'a [u8]> {
-    let len = read_var_uint(buf, pos) as usize;
-    if *pos + len > buf.len() {
-        return None;
-    }
-    let s = &buf[*pos..*pos + len];
-    *pos += len;
-    Some(s)
-}
-
-fn write_var_string(s: &str, out: &mut Vec<u8>) {
-    let bytes = s.as_bytes();
-    write_var_uint(bytes.len() as u32, out);
-    out.extend_from_slice(bytes);
-}
-
-fn read_var_bytes<'a>(buf: &'a [u8], pos: &mut usize) -> Option<&'a [u8]> {
-    let len = read_var_uint(buf, pos) as usize;
-    if *pos + len > buf.len() {
-        return None;
-    }
-    let b = &buf[*pos..*pos + len];
-    *pos += len;
-    Some(b)
-}
 
 enum WorkerCmd {
     ApplyState(Vec<u8>),
@@ -146,29 +96,27 @@ fn worker_thread(
                 }
             }
             WorkerCmd::InboundWs(data) => {
-                let mut pos = 0usize;
                 if data.is_empty() {
                     continue;
                 }
-                // read incoming document name (varstring)
-                let name_bytes_opt = read_var_string(&data, &mut pos);
-                let frame_doc_name =
-                    String::from_utf8_lossy(name_bytes_opt.unwrap_or_default()).to_string();
-                // read outer message type
-                let t = read_var_uint(&data, &mut pos);
+                // read incoming document name (varstring) and outer message type using yrs encoding
+                let mut cur = YCursor::new(&data);
+                let frame_doc_name = cur.read_string().unwrap_or("").to_string();
+                let t: u32 = cur.read_var().unwrap_or(0);
                 tracing::debug!(doc_name = %frame_doc_name, msg_type = t, len = data.len(), "inbound frame");
-                let body = &data[pos..];
+                let body = &data[cur.next..];
                 match t {
                     MSG_SYNC => {
                         // Manual parse of y-sync submessage
-                        let mut ipos = 0usize;
                         if body.is_empty() {
                             tracing::debug!("empty y-sync body");
                         } else {
-                            let subtag = read_var_uint(body, &mut ipos);
+                            let mut bcur = YCursor::new(body);
+                            let subtag: u32 = bcur.read_var().unwrap_or(u32::MAX);
                             match subtag {
-                                0 => { // SyncStep1(sv)
-                                    if let Some(sv_bytes) = read_var_bytes(body, &mut ipos) {
+                                0 => {
+                                    // SyncStep1(sv)
+                                    if let Ok(sv_bytes) = bcur.read_buf() {
                                         if let Ok(sv) = StateVector::decode_v1(sv_bytes) {
                                             // reply with SyncStep2 from doc state diff
                                             let update = {
@@ -176,33 +124,35 @@ fn worker_thread(
                                                 txn.encode_state_as_update_v1(&sv)
                                             };
                                             let mut out = Vec::new();
-                                            write_var_string(&frame_doc_name, &mut out);
-                                            write_var_uint(MSG_SYNC, &mut out);
+                                            out.write_string(&frame_doc_name);
+                                            out.write_var(MSG_SYNC);
                                             // subtag 1: SyncStep2(update)
-                                            write_var_uint(1, &mut out);
+                                            out.write_var(1u32);
                                             // writeVarUint8Array(update)
-                                            write_var_uint(update.len() as u32, &mut out);
-                                            out.extend(update);
+                                            out.write_buf(&update);
                                             tracing::debug!(len = out.len(), out_doc = %frame_doc_name, manual = true, "outbound sync step2 reply");
-                                            let _ = ev_tx.blocking_send(WorkerEvent::OutgoingWs(out));
+                                            let _ =
+                                                ev_tx.blocking_send(WorkerEvent::OutgoingWs(out));
                                         }
                                     }
                                 }
-                                1 | 2 => { // SyncStep2 or Update
-                                    if let Some(upd_bytes) = read_var_bytes(body, &mut ipos) {
-                                        // apply incoming update
-                                        let upd = Update::decode_v1(upd_bytes).or_else(|_| Update::decode_v2(upd_bytes));
-                                        if let Ok(update) = upd {
-                                            if let Err(e) = doc.transact_mut().apply_update(update) {
+                                1 | 2 => {
+                                    // SyncStep2 or Update
+                                    if let Ok(upd_bytes) = bcur.read_buf() {
+                                        // apply incoming update (v1 only)
+                                        if let Ok(update) = Update::decode_v1(upd_bytes) {
+                                            if let Err(e) = doc.transact_mut().apply_update(update)
+                                            {
                                                 tracing::warn!(?e, "failed to apply update");
                                             }
                                             // send SyncStatus applied=1
                                             let mut ack = Vec::new();
-                                            write_var_string(&frame_doc_name, &mut ack);
-                                            write_var_uint(MSG_SYNC_STATUS, &mut ack);
-                                            write_var_uint(1, &mut ack);
+                                            ack.write_string(&frame_doc_name);
+                                            ack.write_var(MSG_SYNC_STATUS);
+                                            ack.write_var(1u32);
                                             tracing::debug!(out_doc = %frame_doc_name, manual = true, "outbound sync status ack");
-                                            let _ = ev_tx.blocking_send(WorkerEvent::OutgoingWs(ack));
+                                            let _ =
+                                                ev_tx.blocking_send(WorkerEvent::OutgoingWs(ack));
 
                                             // also emit StoreState immediately to ensure persistence
                                             let bytes = {
@@ -210,9 +160,12 @@ fn worker_thread(
                                                 let sv = StateVector::default();
                                                 txn.encode_state_as_update_v1(&sv)
                                             };
-                                            let _ = ev_tx.blocking_send(WorkerEvent::StoreState(bytes));
+                                            let _ =
+                                                ev_tx.blocking_send(WorkerEvent::StoreState(bytes));
                                         } else {
-                                            tracing::debug!("failed to decode update bytes (v1/v2)");
+                                            tracing::debug!(
+                                                "failed to decode update bytes (v1 only)"
+                                            );
                                         }
                                     }
                                 }
@@ -222,7 +175,8 @@ fn worker_thread(
                             }
                         }
                     }
-                    2 => { // Auth
+                    2 => {
+                        // Auth
                         // Ignore auth for MVP (no auth)
                         tracing::debug!("ignoring auth message");
                     }
@@ -235,8 +189,8 @@ fn worker_thread(
                                     .flatten();
                                 if let Some(msg) = reply {
                                     let mut out = Vec::new();
-                                    write_var_string(&frame_doc_name, &mut out);
-                                    write_var_uint(MSG_AWARENESS, &mut out);
+                                    out.write_string(&frame_doc_name);
+                                    out.write_var(MSG_AWARENESS);
                                     out.extend(msg.encode_v1());
                                     tracing::debug!(len = out.len(), out_doc = %frame_doc_name, "outbound awareness echo");
                                     let _ = ev_tx.blocking_send(WorkerEvent::OutgoingWs(out));
@@ -249,8 +203,8 @@ fn worker_thread(
                     MSG_QUERY_AWARENESS => {
                         if let Ok(Some(reply)) = protocol.handle_awareness_query(&awareness) {
                             let mut out = Vec::new();
-                            write_var_string(&frame_doc_name, &mut out);
-                            write_var_uint(MSG_AWARENESS, &mut out);
+                            out.write_string(&frame_doc_name);
+                            out.write_var(MSG_AWARENESS);
                             out.extend(reply.encode_v1());
                             tracing::debug!(len = out.len(), out_doc = %frame_doc_name, "outbound awareness reply");
                             let _ = ev_tx.blocking_send(WorkerEvent::OutgoingWs(out));
@@ -297,9 +251,9 @@ async fn on_ws<E: DatabaseExtension + 'static>(mut socket: WebSocket, state: Arc
                     Some(Ok(Message::Binary(b))) => {
                         // detect document name from first frame and load state before forwarding
                         if selected_doc_name.is_none() {
-                            let mut pos = 0usize;
-                            if let Some(name_bytes) = read_var_string(&b, &mut pos) {
-                                let name = String::from_utf8_lossy(name_bytes).to_string();
+                            let mut cur = YCursor::new(&b);
+                            if let Ok(name_str) = cur.read_string() {
+                                let name = name_str.to_string();
                                 tracing::debug!(document_name = %name, "first frame; loading state");
                                 // increment connection count for this doc
                                 state.doc_counts.entry(name.clone()).and_modify(|c| *c += 1).or_insert(1);
@@ -406,9 +360,9 @@ async fn on_ws<E: DatabaseExtension + 'static>(mut socket: WebSocket, state: Arc
                         #[cfg(feature = "redis")]
                         if let (Some(name), Some(bc)) = (selected_doc_name.as_ref(), state.redis.as_ref()) {
                             // determine message type after varstring
-                            let mut p = 0usize;
-                            let _ = read_var_string(&bytes, &mut p);
-                            let mtype = read_var_uint(&bytes, &mut p);
+                            let mut cur = YCursor::new(&bytes);
+                            let _ = cur.read_string();
+                            let mtype: u32 = cur.read_var().unwrap_or(u32::MAX);
                             let payload = &bytes[..];
                             // publish full framed message so other instances can forward as-is
                             if mtype == MSG_SYNC {

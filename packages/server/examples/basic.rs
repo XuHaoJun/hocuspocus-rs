@@ -1,5 +1,5 @@
 use axum::Router;
-use hocuspocus_extension_database::SqliteDatabase;
+use hocuspocus_extension_sqlite::SqliteDatabase;
 use hocuspocus_server::{router, AppState};
 use std::net::SocketAddr;
 use std::sync::Arc;
