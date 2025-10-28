@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bytes::Bytes;
 use futures_util::stream::StreamExt;
-use redis::{AsyncCommands, Client, Msg};
+use redis::{AsyncCommands, Client};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use tokio::task::JoinHandle;
 

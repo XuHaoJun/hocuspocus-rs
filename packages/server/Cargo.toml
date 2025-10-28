@@ -11,11 +11,9 @@ redis = ["hocuspocus-extension-redis"]
 [dependencies]
 anyhow = "1"
 async-trait = "0.1"
-axum = { version = "0.7", features = ["ws"] }
-dashmap = "5"
+axum = { version = "0.8", features = ["ws"] }
+dashmap = "6"
 futures-util = "0.3"
-parking_lot = "0.12"
-thiserror = "1"
 tokio = { version = "1", features = [
   "macros",
   "rt-multi-thread",

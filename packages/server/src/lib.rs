@@ -35,7 +35,7 @@ pub struct AppState<E: DatabaseExtension> {
 
 pub fn router<E: DatabaseExtension + 'static>(state: AppState<E>) -> Router {
     Router::new()
-        .route("/ws", get(ws_handler::<E>))
+        .route("/ws", get(|ws, state| ws_handler::<E>(ws, state)))
         .with_state(Arc::new(state))
 }
 
@@ -251,7 +251,7 @@ async fn on_ws<E: DatabaseExtension + 'static>(mut socket: WebSocket, state: Arc
                     Some(Ok(Message::Binary(b))) => {
                         // detect document name from first frame and load state before forwarding
                         if selected_doc_name.is_none() {
-                            let mut cur = YCursor::new(&b);
+                            let mut cur = YCursor::new(b.as_ref());
                             if let Ok(name_str) = cur.read_string() {
                                 let name = name_str.to_string();
                                 tracing::debug!(document_name = %name, "first frame; loading state");
@@ -276,7 +276,7 @@ async fn on_ws<E: DatabaseExtension + 'static>(mut socket: WebSocket, state: Arc
                                 tracing::debug!("failed to read document name from first frame");
                             }
                         }
-                        let _ = cmd_tx.send(WorkerCmd::InboundWs(b));
+                        let _ = cmd_tx.send(WorkerCmd::InboundWs(b.to_vec()));
                     }
                     Some(Ok(Message::Ping(p))) => {
                         tracing::debug!(size = %p.len(), "ping received");
@@ -356,7 +356,9 @@ async fn on_ws<E: DatabaseExtension + 'static>(mut socket: WebSocket, state: Arc
                 match ev {
                     WorkerEvent::OutgoingWs(bytes) => {
                         tracing::debug!(len = bytes.len(), "sending binary to client");
-                        let _ = socket.send(Message::Binary(bytes.clone())).await;
+                        let _ = socket
+                            .send(Message::Binary(axum::body::Bytes::from(bytes.clone())))
+                            .await;
                         #[cfg(feature = "redis")]
                         if let (Some(name), Some(bc)) = (selected_doc_name.as_ref(), state.redis.as_ref()) {
                             // determine message type after varstring
