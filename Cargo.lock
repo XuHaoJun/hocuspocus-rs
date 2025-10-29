@@ -621,6 +621,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "hocuspocus-axum-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "dashmap",
+ "futures-util",
+ "hocuspocus-extension-database",
+ "hocuspocus-extension-redis",
+ "hocuspocus-extension-sqlite",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "yrs",
+]
+
+[[package]]
 name = "hocuspocus-extension-database"
 version = "0.1.0"
 dependencies = [
@@ -649,24 +667,6 @@ dependencies = [
  "hocuspocus-extension-database",
  "sqlx",
  "tokio",
-]
-
-[[package]]
-name = "hocuspocus-server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum",
- "dashmap",
- "futures-util",
- "hocuspocus-extension-database",
- "hocuspocus-extension-redis",
- "hocuspocus-extension-sqlite",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "yrs",
 ]
 
 [[package]]

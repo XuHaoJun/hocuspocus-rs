@@ -10,6 +10,23 @@ Rust MVP of Hocuspocus-like server-side persistence built on yrs and axum. The M
 
 ### Quick start
 
+Cargo.toml
+
+```toml
+[dependencies]
+hocuspocus-axum-server = "0.1"
+hocuspocus-extension-sqlite= "0.1"
+hocuspocus-extension-redis= "0.1"
+```
+
+database trait:
+
+You can implement persistent data in any database, example: `./package/extension-sqlite`
+
+```toml
+hocuspocus-extension-database= "0.1"
+```
+
 Server example (Axum, listens on `ws://127.0.0.1:4000/ws`):
 
 ```rust
@@ -18,7 +35,7 @@ use axum::Router;
 #[cfg(feature = "redis")]
 use hocuspocus_extension_redis::RedisBroadcaster;
 use hocuspocus_extension_sqlite::SqliteDatabase;
-use hocuspocus_server::{ws_handler, AppState, AuthScope, StaticTokenAuth, DocRegistry};
+use hocuspocus_axum_server::{ws_handler, AppState, AuthScope, StaticTokenAuth, DocRegistry};
 use std::net::SocketAddr;
 use std::sync::Arc;
 

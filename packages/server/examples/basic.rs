@@ -1,9 +1,9 @@
 use axum::routing::get;
 use axum::Router;
+use hocuspocus_axum_server::{ws_handler, AppState, AuthScope, DocRegistry, StaticTokenAuth};
 #[cfg(feature = "redis")]
 use hocuspocus_extension_redis::RedisBroadcaster;
 use hocuspocus_extension_sqlite::SqliteDatabase;
-use hocuspocus_server::{ws_handler, AppState, AuthScope, DocRegistry, StaticTokenAuth};
 use std::net::SocketAddr;
 use std::sync::Arc;
 

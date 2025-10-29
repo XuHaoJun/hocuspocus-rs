@@ -1,5 +1,5 @@
 [package]
-name = "hocuspocus-server"
+name = "hocuspocus-axum-server"
 version = "0.1.0"
 edition = "2021"
 description = "Axum WebSocket skeleton for hocuspocus-rs with fetch/store glue"
