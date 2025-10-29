@@ -1,6 +1,8 @@
 # hocuspocus-rs
 
-Rust MVP of Hocuspocus-like server-side persistence built on yrs and axum. The MVP focuses on the database extension only, providing a stateless database extension trait and a SQLite adapter. The server debounces store operations and persists full state blobs (no incremental updates in MVP). Auth via the Hocuspocus handshake is supported but disabled by default.
+Rust MVP of [Hocuspocus](https://github.com/ueberdosis/hocuspocus) server-side persistence built on [Y.js](https://github.com/yjs/yjs) and [axum](https://github.com/tokio-rs/axum).
+The MVP focuses on the database extension only, providing a stateless database extension trait and a SQLite adapter.
+The server debounces store operations and persists full state blobs (no incremental updates in MVP). Auth via the Hocuspocus handshake is supported but disabled by default.
 
 ### What’s here
 
@@ -21,7 +23,7 @@ hocuspocus-extension-redis= "0.1"
 
 database trait:
 
-You can implement persistent data in any database, example: `./package/extension-sqlite`
+You can implement persistent data in any database, example: [packages/extension-sqlite](packages/extension-sqlite)
 
 ```toml
 hocuspocus-extension-database= "0.1"
