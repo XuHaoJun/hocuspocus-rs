@@ -22,12 +22,60 @@ use yrs::{Doc, ReadTxn, StateVector, Transact, Update};
 #[cfg(feature = "redis")]
 use hocuspocus_extension_redis::RedisBroadcaster;
 
+pub struct DocRegistry {
+    doc_counts: DashMap<String, usize>,
+    doc_latest: DashMap<String, Vec<u8>>, // last full state per doc
+}
+
+impl DocRegistry {
+    pub fn new() -> Self {
+        Self {
+            doc_counts: DashMap::new(),
+            doc_latest: DashMap::new(),
+        }
+    }
+
+    pub fn increment(&self, name: &str) -> usize {
+        let entry = self
+            .doc_counts
+            .entry(name.to_string())
+            .and_modify(|c| *c += 1)
+            .or_insert(1);
+        *entry
+    }
+
+    pub fn decrement(&self, name: &str) -> Option<usize> {
+        if let Some(mut entry) = self.doc_counts.get_mut(name) {
+            if *entry > 0 {
+                *entry -= 1;
+            }
+            let remaining = *entry;
+            drop(entry);
+            Some(remaining)
+        } else {
+            None
+        }
+    }
+
+    pub fn set_latest(&self, name: &str, bytes: Vec<u8>) {
+        self.doc_latest.insert(name.to_string(), bytes);
+    }
+
+    pub fn get_latest_cloned(&self, name: &str) -> Option<Vec<u8>> {
+        self.doc_latest.get(name).map(|v| v.clone())
+    }
+
+    pub fn remove(&self, name: &str) {
+        self.doc_counts.remove(name);
+        self.doc_latest.remove(name);
+    }
+}
+
 pub struct AppState<E: DatabaseExtension> {
     pub db: Arc<E>,
     pub debounce_ms: u64,
     pub max_debounce_ms: u64,
-    pub doc_counts: DashMap<String, usize>,
-    pub doc_latest: DashMap<String, Vec<u8>>, // last full state per doc
+    pub docRegistry: DocRegistry,
     #[cfg(feature = "redis")]
     pub redis: Option<Arc<RedisBroadcaster>>, // optional broadcaster
     // Optional authentication provider; when None, auth is disabled
@@ -284,7 +332,7 @@ async fn on_ws<E: DatabaseExtension + 'static>(mut socket: WebSocket, state: Arc
                                 let name = name_str.to_string();
                                 tracing::debug!(document_name = %name, "first frame received");
                                 // increment connection count for this doc
-                                state.doc_counts.entry(name.clone()).and_modify(|c| *c += 1).or_insert(1);
+                                let _ = state.docRegistry.increment(&name);
                                 selected_doc_name = Some(name.clone());
 
                                 // If auth is enabled, require auth before loading state or forwarding messages
@@ -412,21 +460,17 @@ async fn on_ws<E: DatabaseExtension + 'static>(mut socket: WebSocket, state: Arc
                         tracing::debug!(pending = pending, ?frame, "closing connection");
                         // decrement connection count and if last, force save latest known state
                         if let Some(name) = selected_doc_name.as_ref() {
-                            if let Some(mut entry) = state.doc_counts.get_mut(name) {
-                                *entry -= 1;
-                                let remaining = *entry;
-                                drop(entry);
+                            if let Some(remaining) = state.docRegistry.decrement(name) {
                                 if remaining == 0 {
                                     let to_store = latest_state_bytes
                                         .as_ref()
                                         .cloned()
-                                        .or_else(|| state.doc_latest.get(name).map(|v| v.clone()));
+                                        .or_else(|| state.docRegistry.get_latest_cloned(name));
                                     if let Some(bytes) = to_store {
                                         tracing::debug!(document_name = %name, "last client left; force storing state");
                                         let _ = store_bytes(&*state.db, name, &bytes).await;
                                     }
-                                    state.doc_counts.remove(name);
-                                    state.doc_latest.remove(name);
+                                    state.docRegistry.remove(name);
                                 }
                             }
                         }
@@ -445,21 +489,17 @@ async fn on_ws<E: DatabaseExtension + 'static>(mut socket: WebSocket, state: Arc
                         tracing::debug!(pending = pending, "socket closed by peer");
                         // decrement connection count and if last, force save latest known state
                         if let Some(name) = selected_doc_name.as_ref() {
-                            if let Some(mut entry) = state.doc_counts.get_mut(name) {
-                                *entry -= 1;
-                                let remaining = *entry;
-                                drop(entry);
+                            if let Some(remaining) = state.docRegistry.decrement(name) {
                                 if remaining == 0 {
                                     let to_store = latest_state_bytes
                                         .as_ref()
                                         .cloned()
-                                        .or_else(|| state.doc_latest.get(name).map(|v| v.clone()));
+                                        .or_else(|| state.docRegistry.get_latest_cloned(name));
                                     if let Some(bytes) = to_store {
                                         tracing::debug!(document_name = %name, "last client left; force storing state");
                                         let _ = store_bytes(&*state.db, name, &bytes).await;
                                     }
-                                    state.doc_counts.remove(name);
-                                    state.doc_latest.remove(name);
+                                    state.docRegistry.remove(name);
                                 }
                             }
                         }
@@ -503,7 +543,7 @@ async fn on_ws<E: DatabaseExtension + 'static>(mut socket: WebSocket, state: Arc
                     WorkerEvent::StoreState(bytes) => {
                         tracing::debug!(state_len = bytes.len(), "doc update observed; scheduling store");
                         if let Some(name) = selected_doc_name.as_ref() {
-                            state.doc_latest.insert(name.clone(), bytes.clone());
+                            state.docRegistry.set_latest(name, bytes.clone());
                         }
                         latest_state_bytes = Some(bytes);
                         let now = Instant::now();

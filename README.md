@@ -15,11 +15,10 @@ Server example (Axum, listens on `ws://127.0.0.1:4000/ws`):
 ```rust
 use axum::routing::get;
 use axum::Router;
-use dashmap::DashMap;
 #[cfg(feature = "redis")]
 use hocuspocus_extension_redis::RedisBroadcaster;
 use hocuspocus_extension_sqlite::SqliteDatabase;
-use hocuspocus_server::{ws_handler, AppState, AuthScope, StaticTokenAuth};
+use hocuspocus_server::{ws_handler, AppState, AuthScope, StaticTokenAuth, DocRegistry};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -49,8 +48,7 @@ async fn main() -> anyhow::Result<()> {
         db: Arc::new(db),
         debounce_ms: 250,
         max_debounce_ms: 2000,
-        doc_counts: DashMap::new(),
-        doc_latest: DashMap::new(),
+        docRegistry: DocRegistry::new(),
         auth: Some(Arc::new(StaticTokenAuth {
             token: "test".to_string(),
             scope: AuthScope::ReadWrite,
