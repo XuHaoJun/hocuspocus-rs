@@ -24,8 +24,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 yrs = "0.24"
 
-hocuspocus-extension-database = { path = "../extension-database" }
-hocuspocus-extension-redis = { path = "../extension-redis", optional = true }
+hocuspocus-extension-database = { path = "../extension-database", version = "0.1" }
+hocuspocus-extension-redis = { path = "../extension-redis", optional = true, version = "0.1" }
 
 [dev-dependencies]
-hocuspocus-extension-sqlite = { path = "../extension-sqlite" }
+hocuspocus-extension-sqlite = { path = "../extension-sqlite", version = "0.1" }
