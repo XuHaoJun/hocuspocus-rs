@@ -33,7 +33,7 @@ async fn main() -> anyhow::Result<()> {
         db: Arc::new(db),
         debounce_ms: 250,
         max_debounce_ms: 2000,
-        docRegistry: DocRegistry::new(),
+        doc_registry: DocRegistry::new(),
         auth: Some(Arc::new(StaticTokenAuth {
             token: "test".to_string(),
             scope: AuthScope::ReadWrite,
